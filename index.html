@@ -272,22 +272,25 @@ function endDialog(i){var b=st.bays[i],mins=Math.max(1,Math.ceil(elapsedSec(b)/6
 async function pick(i){
   var b=st.bays[i],n=bayName(i);
   if(b.s=='on'){endDialog(i);return}
-  var savedGames=(DB.games||[]).filter(function(g){return g&&g.active!==false&&g.title});
+  var savedGames=[];
   if(currentUser){
     try{
       var gr=await sb.from('games').select('id,title,platform,price_30_min,active').eq('active',true).order('created_at',{ascending:true});
-      if(!gr.error&&gr.data){
-        DB.games=gr.data.map(function(g){return {id:g.id,title:g.title,platform:g.platform,price:+g.price_30_min||0,active:g.active!==false}});
-        savedGames=DB.games.filter(function(g){return g&&g.active!==false&&g.title});
-      }
-    }catch(e){console.warn('Game list refresh:',e)}
+      if(gr.error)throw gr.error;
+      savedGames=(gr.data||[]).filter(function(g){return g&&g.title}).map(function(g){return {id:g.id,title:g.title,platform:g.platform,price:+g.price_30_min||0,active:g.active!==false}});
+      DB.games=savedGames.slice();
+    }catch(e){
+      console.warn('Could not load Games from Supabase:',e);
+      savedGames=(DB.games||[]).filter(function(g){return g&&g.active!==false&&g.title});
+    }
+  }else{
+    savedGames=(DB.games||[]).filter(function(g){return g&&g.active!==false&&g.title});
   }
   var names=savedGames.map(function(g){return g.title});
   if(b.det&&names.indexOf(b.det)<0)names.unshift(b.det);
   if(!names.length)names=['No games saved'];
   dlg('<h3>'+(b.s=='un'?'Log session for '+n:'Start session on '+n)+'</h3><p>Pick the game being played</p>'+names.map(function(g){return '<button data-go="'+i+'" data-g="'+String(g).replace(/"/g,'&quot;')+'">'+String(g).replace(/</g,'&lt;')+'</button>'}).join('')+'<button class="cx" data-x>Cancel</button>')
 }
-
 document.addEventListener('click',function(e){var t=e.target,q=function(s){return t.closest('['+s+']')},x;
 if(x=q('data-pg')){go(x.dataset.pg);$('side').classList.remove('open');return}
 if(q('data-menu')){$('side').classList.toggle('open');return}
