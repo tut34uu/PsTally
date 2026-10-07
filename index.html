@@ -276,8 +276,8 @@ if(x=q('data-pg')){go(x.dataset.pg);$('side').classList.remove('open');return}
 if(q('data-menu')){$('side').classList.toggle('open');return}
 if(x=q('data-add')){form(x.dataset.add);return}
 if(x=q('data-save')){save1(x.dataset.save);return}
-if(x=q('data-del')){var a=x.dataset.del.split(',');DB[a[0]].splice(+a[1],1);all();go(a[0]);return}
-if(x=q('data-act')){var a=x.dataset.act.split(',');G[a[0]].act[+a[2]][1](DB[a[0]][+a[1]]);all();go(a[0]);return}
+if(x=q('data-del')){var a=x.dataset.del.split(','),dk=a[0],di=+a[1],dr=DB[dk][di];DB[dk].splice(di,1);if(currentUser&&dr&&dr.id&&CLOUD_TABLES.indexOf(dk)>=0)sb.from(dk).delete().eq('id',dr.id).then(function(r){if(r.error)console.warn(r.error)});all();go(dk);return}
+if(x=q('data-act')){var a=x.dataset.act.split(','),ak=a[0],ar=DB[ak][+a[1]];G[ak].act[+a[2]][1](ar);all();go(ak);if(currentUser&&ar&&ar.id&&CLOUD_TABLES.indexOf(ak)>=0)syncCloud();return}
 if(q('data-copy')){try{navigator.clipboard.writeText('PSTALLY-7K2')}catch(_){}toast('Referral code copied');return}
 if(q('data-baynames')){for(var bn=1;bn<=6;bn++){var nv=($('bn'+bn)&&$('bn'+bn).value.trim())||'Bay '+bn;st.bays[bn-1].name=nv;}DB.consoles.forEach(function(c,i){if(st.bays[i])c.bay=bayName(i)});all();toast('Bay names saved');return}
 if(q('data-cfg')){st.lounge=$('cn').value.trim()||'Demo Lounge';st.rate=Math.max(10,+$('cr').value||100);all();toast('Settings saved');return}
@@ -317,34 +317,41 @@ sessions:[],
 tournaments:[]};
 var K='pstally-v2-zeroed',cur='dash';
 function save(){try{localStorage.setItem(K,JSON.stringify({st:st,DB:DB}))}catch(_){} if(currentUser&&!cloudBusy) syncCloud();}
-async function syncCloud(){if(!currentUser||cloudBusy)return;cloudBusy=true;try{
-  var state={st:st,DB:DB};
-  var r=await sb.from('app_state').upsert({id:1,state:state,updated_at:new Date().toISOString()},{onConflict:'id'});
-  if(r.error)throw r.error;
-}catch(e){console.warn('Cloud sync:',e)}finally{cloudBusy=false}}
-var bayIds=[];
-try{var sv=JSON.parse(localStorage.getItem(K)||'null');if(sv){Object.assign(st,sv.st);Object.assign(DB,sv.DB);st.per='today';hydrateBayTimers()}}catch(_){}
-async function loadCloud(){
-  if(!currentUser)return;
-  cloudReady=false;
-  var state=await sb.from('app_state').select('state').eq('id',1).maybeSingle();
-  if(state.data&&state.data.state){
-    try{Object.assign(st,state.data.state.st||{});Object.assign(DB,state.data.state.DB||{});st.per='today';hydrateBayTimers();}catch(e){console.warn(e)}
-  }else{
-    var b=await sb.from('bays').select('*').order('sort_order');
-    if(b.data&&b.data.length){st.bays=b.data.slice(0,6).map(function(x){return {s:'op',name:x.name}});while(st.bays.length<6)st.bays.push({s:'op',name:'Bay '+(st.bays.length+1)});}
-    var t=await sb.from('transactions').select('*').order('paid_at',{ascending:false});
-    if(t.data){DB.sessions=t.data.map(function(x){var d=new Date(x.paid_at);return {date:d.toLocaleDateString('en-CA'),time:d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}),paymentTime:d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}),paymentDateTime:x.paid_at,bay:x.bay_name_snapshot||'Bay',customer:x.customer_name||'Walk-in',game:x.game||'Unknown',minutes:x.duration_minutes||0,amount:+x.amount||0,payment:x.payment_method}});}
-    var ex=await sb.from('expenses').select('*').order('expense_date',{ascending:false});
-    if(ex.data)DB.expenses=ex.data.map(function(x){return {id:x.id,item:x.description,amount:+x.amount||0,date:x.expense_date}});
-    var co=await sb.from('cashouts').select('*').order('cashout_at',{ascending:false});
-    if(co.data)DB.cashouts=co.data.map(function(x){return {id:x.id,who:x.who||'Staff',amount:+x.amount||0,reason:x.reason||'',status:x.status||'Pending'}});
-    var set=await sb.from('business_settings').select('*').eq('id',1).single();
-    if(set.data){st.lounge=set.data.business_name||st.lounge;}
-    await syncCloud();
-  }
-  cloudReady=true; all();
+var CLOUD_TABLES=['games','consoles','staff','shifts','debts','products','income','tournaments'];
+function ensureIds(){CLOUD_TABLES.forEach(function(k){(DB[k]||[]).forEach(function(r){if(!r.id)r.id=(crypto.randomUUID?crypto.randomUUID():(Date.now().toString(36)+Math.random().toString(36).slice(2)));});});}
+function rowForCloud(k,r){
+  if(k=='games')return {id:r.id,title:r.title,platform:r.platform||'PS5',price_30_min:+r.price||0,active:r.active!==false};
+  if(k=='consoles'){var bi=Math.max(0,(st.bays||[]).findIndex(function(b){return b.name==r.bay;}));return {id:r.id,name:r.name,type:r.type||'PS5',bay_id:bayIds[bi]||null,active:r.active!==false};}
+  if(k=='staff')return {id:r.id,name:r.name,role:r.role||'Attendant',phone:r.phone||null,active:r.active!==false};
+  if(k=='shifts'){var sm=(DB.staff||[]).find(function(x){return x.name==r.staff;});return {id:r.id,staff_id:sm&&sm.id||null,started_at:r.started_at||new Date().toISOString(),ended_at:r.ended_at||null,sessions:+r.sessions||0,collected:+r.collected||0,status:r.status||'Open'};}
+  if(k=='debts')return {id:r.id,customer:r.customer,amount:+r.amount||0,status:r.status||'Unpaid',transaction_id:r.transaction_id||null,paid_at:r.status=='Paid'?(r.paid_at||new Date().toISOString()):null};
+  if(k=='products')return {id:r.id,name:r.name,price:+r.price||0,stock:+r.stock||0,active:r.active!==false};
+  if(k=='income')return {id:r.id,source:r.source,amount:+r.amount||0,income_date:r.date||localDateKey(),notes:r.notes||null,created_by:currentUser&&currentUser.id||null};
+  if(k=='tournaments'){var gm=(DB.games||[]).find(function(x){return x.title==r.game;});return {id:r.id,name:r.name,game_id:gm&&gm.id||null,fee:+r.fee||0,tournament_date:r.date||null,status:r.status||'Planned'};}
 }
+async function syncDedicated(){ensureIds();for(var z=0;z<CLOUD_TABLES.length;z++){var k=CLOUD_TABLES[z],rows=(DB[k]||[]).map(function(r){return rowForCloud(k,r)});if(rows.length){var rr=await sb.from(k).upsert(rows,{onConflict:'id'});if(rr.error)throw rr.error;}}}
+async function syncCloud(){if(!currentUser||cloudBusy)return;cloudBusy=true;try{ensureIds();var state={st:st,DB:DB};var r=await sb.from('app_state').upsert({id:1,state:state,updated_at:new Date().toISOString()},{onConflict:'id'});if(r.error)throw r.error;await syncDedicated();}catch(e){console.warn('Cloud sync:',e)}finally{cloudBusy=false}}
+var bayIds=[];
+try{var sv=JSON.parse(localStorage.getItem(K)||'null');if(sv){Object.assign(st,sv.st);Object.assign(DB,sv.DB);st.per='today';hydrateBayTimers();ensureIds()}}catch(_){}
+async function loadDedicated(){
+  var b=await sb.from('bays').select('*').order('sort_order');
+  if(b.data&&b.data.length){bayIds=b.data.map(function(x){return x.id});st.bays=b.data.slice(0,6).map(function(x){return {s:'op',name:x.name}});while(st.bays.length<6)st.bays.push({s:'op',name:'Bay '+(st.bays.length+1)});}
+  var qs=await Promise.all(CLOUD_TABLES.map(function(k){return sb.from(k).select('*').order('created_at',{ascending:true})}));
+  if(qs[0].data)DB.games=qs[0].data.map(function(x){return {id:x.id,title:x.title,platform:x.platform,price:+x.price_30_min||0,active:x.active!==false}});
+  if(qs[1].data)DB.consoles=qs[1].data.map(function(x){var bi=bayIds.indexOf(x.bay_id);return {id:x.id,name:x.name,type:x.type,bay:bi>=0?bayName(bi):(x.bay||'') ,active:x.active!==false}});
+  if(qs[2].data)DB.staff=qs[2].data.map(function(x){return {id:x.id,name:x.name,role:x.role,phone:x.phone||'',active:x.active!==false}});
+  if(qs[3].data)DB.shifts=qs[3].data.map(function(x){var sm=(DB.staff||[]).find(function(s){return s.id==x.staff_id});return {id:x.id,staff:sm?sm.name:'',start:new Date(x.started_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}),started_at:x.started_at,ended_at:x.ended_at,sessions:+x.sessions||0,collected:+x.collected||0,status:x.status}});
+  if(qs[4].data)DB.debts=qs[4].data.map(function(x){return {id:x.id,customer:x.customer,amount:+x.amount||0,status:x.status,transaction_id:x.transaction_id,paid_at:x.paid_at}});
+  if(qs[5].data)DB.products=qs[5].data.map(function(x){return {id:x.id,name:x.name,price:+x.price||0,stock:+x.stock||0,active:x.active!==false}});
+  if(qs[6].data)DB.income=qs[6].data.map(function(x){return {id:x.id,source:x.source,amount:+x.amount||0,date:x.income_date,notes:x.notes||''}});
+  if(qs[7].data)DB.tournaments=qs[7].data.map(function(x){var gm=(DB.games||[]).find(function(g){return g.id==x.game_id});return {id:x.id,name:x.name,game:gm?gm.title:'',fee:+x.fee||0,date:x.tournament_date,status:x.status}});
+  var t=await sb.from('transactions').select('*').order('paid_at',{ascending:false});if(t.data)DB.sessions=t.data.map(function(x){var d=new Date(x.paid_at);return {id:x.id,date:d.toLocaleDateString('en-CA'),time:d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}),paymentTime:d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}),paymentDateTime:x.paid_at,bay:x.bay_name_snapshot||'Bay',customer:x.customer_name||'Walk-in',game:x.game||'Unknown',minutes:x.duration_minutes||0,amount:+x.amount||0,payment:x.payment_method}});
+  var ex=await sb.from('expenses').select('*').order('expense_date',{ascending:false});if(ex.data)DB.expenses=ex.data.map(function(x){return {id:x.id,item:x.description,amount:+x.amount||0,date:x.expense_date}});
+  var co=await sb.from('cashouts').select('*').order('cashout_at',{ascending:false});if(co.data)DB.cashouts=co.data.map(function(x){return {id:x.id,who:x.who||'Staff',amount:+x.amount||0,reason:x.reason||'',status:x.status||'Pending',id:x.id}});
+}
+async function loadCloud(){if(!currentUser)return;cloudReady=false;try{var counts=await Promise.all(CLOUD_TABLES.map(function(k){return sb.from(k).select('id',{count:'exact',head:true})}));var hasDedicated=counts.some(function(x){return (x.count||0)>0});if(hasDedicated){await loadDedicated();}else{var state=await sb.from('app_state').select('state').eq('id',1).maybeSingle();if(state.data&&state.data.state){Object.assign(st,state.data.state.st||{});Object.assign(DB,state.data.state.DB||{});st.per='today';hydrateBayTimers();ensureIds();}await loadDedicated();await syncCloud();}var set=await sb.from('business_settings').select('*').eq('id',1).single();if(set.data)st.lounge=set.data.business_name||st.lounge;}catch(e){console.warn('Cloud load:',e)}cloudReady=true;all();subscribeRealtime();}
+function subscribeRealtime(){if(!currentUser||window.psTallyChannel)return;window.psTallyChannel=sb.channel('pstally-live').on('postgres_changes',{event:'*',schema:'public',table:'games'},function(){refreshDedicated()}).on('postgres_changes',{event:'*',schema:'public',table:'consoles'},function(){refreshDedicated()}).on('postgres_changes',{event:'*',schema:'public',table:'staff'},function(){refreshDedicated()}).on('postgres_changes',{event:'*',schema:'public',table:'shifts'},function(){refreshDedicated()}).on('postgres_changes',{event:'*',schema:'public',table:'debts'},function(){refreshDedicated()}).on('postgres_changes',{event:'*',schema:'public',table:'products'},function(){refreshDedicated()}).on('postgres_changes',{event:'*',schema:'public',table:'income'},function(){refreshDedicated()}).on('postgres_changes',{event:'*',schema:'public',table:'tournaments'},function(){refreshDedicated()}).subscribe();}
+async function refreshDedicated(){if(!currentUser||cloudBusy)return;try{await loadDedicated();localStorage.setItem(K,JSON.stringify({st:st,DB:DB}));all();if(cur!='dash')go(cur)}catch(e){console.warn('Realtime refresh:',e)}}
 
 async function bootCloud(){
   var r=await sb.auth.getSession();
@@ -386,7 +393,7 @@ if(k=='refer')return '<div class="ph"><div><h1>Refer &amp; Earn</h1><p>Share you
 return '<div class="ph"><div><h1>Settings</h1><p>Your lounge details, billing rate, and PS5 monitoring.</p></div></div><div class="card cfg"><label>Lounge name<input id="cn" value="'+st.lounge+'"></label><label>Rate per 30 minutes (Ksh)<input id="cr" type="number" min="10" value="'+st.rate+'"></label><button class="btn pri" style="margin-top:16px" data-cfg>Save settings</button><button class="btn" style="margin:16px 0 0 8px" data-reset>Reset demo data</button></div><div class="card cfg" style="margin-top:16px;max-width:720px"><div class="lbl">BAY NAMES</div><p style="color:var(--mute);font-size:12px;margin:6px 0 4px">Give each bay a personalized name. These names will appear on the dashboard, payment history, and monitoring.</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+[1,2,3,4,5,6].map(function(n){return '<label>Bay '+n+'<input id="bn'+n+'" value="'+esc((st.bays[n-1]||{}).name||'Bay '+n)+'" placeholder="Bay '+n+'"></label>'}).join('')+'</div><button class="btn pri" style="margin-top:16px" data-baynames>Save bay names</button></div><div class="card cfg" style="margin-top:16px;max-width:520px"><div class="lbl">CO-OPERATIVE BANK M-PESA PAYBILL</div><div class="payinfo"><div class="row"><span>Paybill</span><b>400200</b></div><div class="row"><span>Account number</span><b>1176262</b></div></div></div><div class="card cfg" style="margin-top:16px;max-width:720px"><div class="lbl">PS5 GAME DETECTION</div><p style="color:var(--mute);font-size:12px;margin:6px 0 0">PsTally can read the current PSN “Now Playing” title through the local PS5 Monitor service. Keep the monitor running on the lounge PC. Each bay should use its own PSN account for reliable bay-to-console mapping.</p><div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px"><span class="pill '+(live?'g':'w')+'">'+(live?'Monitor connected':'Monitor not connected')+'</span><span class="pill">'+(lastP[1]||lastP[2]||lastP[3]?'Presence received':'Waiting for presence')+'</span></div><p style="color:var(--mute);font-size:11px;margin-top:12px">PSN credentials belong on the backend in <b>.env</b>; never paste NPSSO tokens into this dashboard.</p></div>'+(live?acct():'')}
 function go(k){cur=k;var d=k=='dash';document.querySelector('.wrap').hidden=!d;$('pg').hidden=d;if(!d)$('pg').innerHTML=page(k);nav();document.querySelector('main').scrollTop=0}
 function form(k){var g=G[k];dlg('<h3>Add '+g.one+'</h3><p>'+g.t+'</p>'+g.f.map(function(x){var o=typeof x[2]=='function'?x[2]():x[2],id='f_'+x[0];return '<label>'+x[1]+(Array.isArray(o)?'<select id="'+id+'">'+o.map(function(v){return '<option>'+v+'</option>'}).join('')+'</select>':'<input id="'+id+'" type="'+(o=='n'?'number':o=='d'?'date':o=='t'?'time':'text')+'"'+(o=='n'?' min="0"':'')+'>')+'</label>'}).join('')+'<button class="pri" data-save="'+k+'">Save</button><button class="cx" data-x>Cancel</button>')}
-async function save1(k){var g=G[k],r=Object.assign({},g.d||{}),ok=1;g.f.forEach(function(x){var v=$('f_'+x[0]).value.trim();if(v==='')ok=0;r[x[0]]=x[2]=='n'?+v:v});if(!ok){toast('Fill in every field');return}DB[k].push(r);if(currentUser&&k=='expenses'){var ex=await sb.from('expenses').insert({description:r.item,amount:r.amount,expense_date:r.date||localDateKey(),created_by:currentUser.id});if(ex.error)toast('Saved locally; cloud sync failed');}if(currentUser&&k=='cashouts'){var co=await sb.from('cashouts').insert({who:r.who||'Staff',amount:r.amount,reason:r.reason||'',status:r.status||'Pending',cashout_at:new Date().toISOString(),created_by:currentUser.id});if(co.error)toast('Saved locally; cloud sync failed');}close();all();go(k);toast('Added '+g.one)}
+async function save1(k){var g=G[k],r=Object.assign({},g.d||{}),ok=1;g.f.forEach(function(x){var v=$('f_'+x[0]).value.trim();if(v==='')ok=0;r[x[0]]=x[2]=='n'?+v:v});if(!ok){toast('Fill in every field');return}r.id=crypto.randomUUID?crypto.randomUUID():(Date.now().toString(36)+Math.random().toString(36).slice(2));if(k=='shifts')r.started_at=new Date().toISOString();DB[k].push(r);if(currentUser&&k=='expenses'){var ex=await sb.from('expenses').insert({description:r.item,amount:r.amount,expense_date:r.date||localDateKey(),created_by:currentUser.id});if(ex.error)toast('Saved locally; cloud sync failed');}if(currentUser&&k=='cashouts'){var co=await sb.from('cashouts').insert({who:r.who||'Staff',amount:r.amount,reason:r.reason||'',status:r.status||'Pending',cashout_at:new Date().toISOString(),created_by:currentUser.id});if(co.error)toast('Saved locally; cloud sync failed');}if(currentUser&&CLOUD_TABLES.indexOf(k)>=0){var cr=await sb.from(k).upsert(rowForCloud(k,r),{onConflict:'id'});if(cr.error)toast('Saved locally; cloud sync failed');}close();all();go(k);toast('Added '+g.one)}
 var live=0,pf=1,cfgB={},lastP={};
 function acct(){return '<div class="card cfg" style="margin-top:16px;max-width:520px"><div class="lbl">Console accounts</div><p style="color:var(--mute);font-size:12px;margin:6px 0 4px">The PSN account signed in on each bay. Enter <b>me</b> for the lounge account itself, or a PSN online ID. Leave a bay blank to skip it.</p>'+[1,2,3,4,5,6].map(function(n){var d=lastP[n]||{},s=d.error?'⚠ '+d.error:d.state=='online'?(d.game||'Online, no game'):d.state=='offline'?'Offline':'';return '<label>Bay '+n+(s?' · <span style="color:var(--green)">'+s.replace(/</g,'&lt;')+'</span>':'')+'<input id="ba'+n+'" value="'+(cfgB[n]||'')+'" placeholder="Not tracked"></label>'}).join('')+'<button class="btn pri" style="margin-top:16px" data-bays>Save accounts</button></div>'}
 function poll(){if(!pf)return;fetch('api/presence',{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json()}).then(function(j){if(!live)fetch('api/config').then(function(r){return r.json()}).then(function(c){cfgB=c.bays||{}});live=1;lastP=j.bays||{};st.bays.forEach(function(b,i){var d=(j.bays||{})[i+1];if(!d||d.state=='unknown')return;var g=d.state=='online'&&d.game||'';b.det=g;if(g&&b.s=='op')b.s='un';else if(!g&&b.s=='un')b.s='op';if(g&&b.s=='on')b.g=g});all()}).catch(function(){pf=0;live=0})}
