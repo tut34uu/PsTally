@@ -308,7 +308,7 @@ if(x=q('data-quick')){var z=x.dataset.quick;if(z=='start'){var oi=st.bays.findIn
 if(x=q('data-p')){st.per=x.dataset.p;[].forEach.call($('tabs').children,function(c){c.classList.toggle('on',c==x)});stats();return}
 if(x=q('data-b')){pick(+x.dataset.b);return}
 if(q('data-inv')){pick(st.bays.findIndex(function(b){return b.s=='un'}));return}
-if(x=q('data-go')){var i=+x.dataset.go;if(st.bays[i].s=='op')st.sess++;st.bays[i]={s:'on',name:bayName(i),g:x.dataset.g,t:0,startedAt:new Date().toISOString(),extraSeconds:0};close();all();toast(bayName(i)+' is now billed · '+x.dataset.g);return}
+if(x=q('data-go')){var i=+x.dataset.go;if(st.bays[i].s=='op')st.sess++;st.bays[i]={s:'on',name:bayName(i),g:x.dataset.g,t:0,startedAt:new Date().toISOString(),extraSeconds:0};save();close();all();toast(bayName(i)+' is now billed · '+x.dataset.g);return}
 if(x=q('data-start')){pick(+x.dataset.start);return}
 if(x=q('data-time')){var tb=st.bays[+x.dataset.time];if(tb&&tb.s=='on'){tb.extraSeconds=(tb.extraSeconds||0)+1800;tb.t=elapsedSec(tb);save();bays();toast('30 minutes added');}return}
 if(x=q('data-bill')){var bi=+x.dataset.bill;if(st.bays[bi].s=='on')endDialog(bi);else pick(bi);return}
@@ -321,7 +321,17 @@ if(q('data-cash')){var cr=DB.cashouts.find(function(r){return r.status=='Pending
 if(q('data-ok')||q('data-no')){var ok=!!q('data-ok'),r=DB.cashouts.find(function(r){return r.status=='Pending'});if(r)G.cashouts.act[ok?0:1][1](r);close();all();toast(ok?'Cash out approved':'Cash out declined');return}
 if(x=q('data-t')){if(x.dataset.t)toast(x.dataset.t)}});
 document.addEventListener('keydown',function(e){if(e.key=='Escape')close();if((e.key=='Enter'||e.key==' ')&&e.target.matches('[tabindex]')){e.preventDefault();e.target.click()}});
-setInterval(function(){document.querySelectorAll('.bay.on .tm').forEach(function(el,k){var on=st.bays.filter(function(b){return b.s=='on'});if(on[k])el.textContent=dur(elapsedSec(on[k]));});if(cur=='dash'){var p=st.per,d=D[p];if(p=='today'){$('pace').innerHTML='On pace for ~ <b>Ksh '+f(Math.max(3550,Math.round(st.rev*1.86/50)*50))+'</b> · '+remainingToday()+' remaining today';}}},1000);
+setInterval(function(){
+  var active=st.bays.filter(function(b){return b.s=='on'});
+  document.querySelectorAll('.bay.on .tm').forEach(function(el,k){if(active[k])el.textContent=dur(elapsedSec(active[k]));});
+  document.querySelectorAll('.bay.on .bill').forEach(function(el,k){if(active[k])el.textContent='Ksh '+f(billFor(active[k]))+' accrued';});
+  document.querySelectorAll('#monitoring .tw tbody tr').forEach(function(row){
+    var txt=row.cells&&row.cells[0]?row.cells[0].textContent.trim():'';
+    var idx=st.bays.findIndex(function(b){return bayName(st.bays.indexOf(b))==txt});
+    if(idx>=0&&st.bays[idx].s=='on'&&row.cells[3])row.cells[3].textContent=dur(elapsedSec(st.bays[idx]));
+  });
+  if(cur=='dash'){var p=st.per;if(p=='today'){$('pace').innerHTML='On pace for ~ <b>Ksh '+f(Math.max(0,Math.round((revenueStats('today').rev||0)*1.86/50)*50))+'</b> · '+remainingToday()+' remaining today';}}
+},1000);
 setInterval(refreshDashboardDate,1000);
 var M=function(n){return 'Ksh '+f(n)},S=function(k,key){return DB[k].reduce(function(a,r){return a+(r[key]||0)},0)};
 var BAYS=['Bay 1','Bay 2','Bay 3','Bay 4','Bay 5','Bay 6'];
